@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "liquidcrystal_i2c.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -40,6 +40,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+I2C_HandleTypeDef hi2c1;
+
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
@@ -50,6 +52,7 @@ UART_HandleTypeDef huart2;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -88,8 +91,37 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART2_UART_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
+    char printout[16];
 
+    long refreshRate = 2;
+    uint32_t lastRefreshTick = HAL_GetTick();
+    uint32_t now;
+    HD44780_Init(2);
+
+    uint16_t joystick_val[3];
+    char cursor_x = 0;
+    _Bool cursor_y = 1;
+    _Bool went_right = 0;
+    _Bool went_left = 0;
+    _Bool went_y = 0;
+    _Bool pressed = 0;
+
+    char time[3] = {0};
+    char time_limit[3] = {24, 60,60};
+    char* time_print[] = {"hr ", "min", "sec"};
+    char time_state = 0;
+    unsigned short adding[] = {1, 5, 10, 20};
+    unsigned int time_remaining;
+    uint32_t start_time;
+    unsigned int total_time;
+
+    int remaining_pause;
+
+    _Bool servo_state = 0;
+
+    enum Page screen = SELECTING;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -99,6 +131,209 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+      now = HAL_GetTick();
+
+      if(screen == SELECTING) {
+          if (!went_right && joystick_val[0] > 4000) {
+              went_right = 1;
+          } else if (went_right && joystick_val[0] < 4000) {
+              if (cursor_y)
+                  cursor_x = (cursor_x + 4) % 16;
+              else
+                  cursor_x = 12;
+              went_right = 0;
+          }
+          if (!went_left && joystick_val[0] < 20) {
+              went_left = 1;
+          } else if (went_left && joystick_val[0] > 20) {
+              if (cursor_y)
+                  cursor_x = (cursor_x - 4) % 16;
+              else
+                  cursor_x = 8;
+              went_left = 0;
+          }
+
+
+          if (pressed == 0 && joystick_val[2] < 20) {
+              pressed = 1;
+              if (cursor_y) {
+                  time[time_state] = (time[time_state] + adding[cursor_x / 4]) % time_limit[time_state];
+              }
+              else {
+                  if (cursor_x == 8) {
+                      time_state++;
+                      if(time_state > 2){
+                          time_state = 2;
+                          screen = CONFIRMING;
+                          cursor_x = 1;
+                      }
+                  } else {
+                      time_state--;
+                      time_state = time_state < 0 ? 0 : time_state;
+                  }
+              }
+          } else if (pressed && joystick_val[2] > 20) {
+              pressed = 0;
+          }
+
+
+          if (!went_y && joystick_val[1] > 4000) {
+              went_y = 1;
+          } else if (went_y && joystick_val[1] < 4000) {
+              cursor_y = 0;
+              cursor_x = 8;
+              went_y = 0;
+          }
+          if (!went_y && joystick_val[1] < 20) {
+              went_y = 1;
+          } else if (went_y && joystick_val[1] > 20) {
+              cursor_y = 1;
+              cursor_x = 0;
+              went_y = 0;
+          }
+      }
+      else if(screen == CONFIRMING){
+          if (!went_right && joystick_val[0] > 4000) {
+              went_right = 1;
+          } else if (went_right && joystick_val[0] < 4000) {
+              cursor_x = 9;
+              went_right = 0;
+          }
+          if (!went_left && joystick_val[0] < 20) {
+              went_left = 1;
+          } else if (went_left && joystick_val[0] > 20) {
+              cursor_x = 1;
+              went_left = 0;
+          }
+
+          if (pressed == 0 && joystick_val[2] < 20) {
+              pressed = 1;
+              if(cursor_x == 9){
+                  screen = SELECTING;
+                  cursor_x = 0;
+                  cursor_y = 1;
+              }
+              else if (cursor_x == 1){
+                  screen = COUNTING;
+                  start_time = now;
+                  total_time = (time[0]*3600 + time[1]*60 + time[2])*1000;
+                  servo_state = 1;
+                  remaining_pause = 2;
+                  cursor_x = 6;
+              }
+          } else if (pressed && joystick_val[2] > 20) {
+              pressed = 0;
+          }
+      }
+      else if(screen == COUNTING){
+          if(now-start_time > total_time){
+              screen = REMINDING;
+              servo_state = 0;
+          }
+          time_remaining = total_time - (now - start_time);
+
+          if (!went_right && joystick_val[0] > 4000) {
+              went_right = 1;
+          } else if (went_right && joystick_val[0] < 4000) {
+              cursor_x = 7;
+              went_right = 0;
+          }
+          if (!went_left && joystick_val[0] < 20) {
+              went_left = 1;
+          } else if (went_left && joystick_val[0] > 20) {
+              cursor_x = 6;
+              went_left = 0;
+          }
+
+          if (pressed == 0 && joystick_val[2] < 20) {
+              pressed = 1;
+              if(cursor_x == 7 && remaining_pause > 0){
+                  screen = PAUSING;
+                  servo_state = 0;
+                  remaining_pause--;
+              }
+          } else if (pressed && joystick_val[2] > 20) {
+              pressed = 0;
+          }
+      }
+      else if(screen == PAUSING){
+          if (pressed == 0 && joystick_val[2] < 20) {
+              pressed = 1;
+              screen = COUNTING;
+              servo_state = 1;
+              total_time = time_remaining;
+              start_time = now;
+              cursor_x = 6;
+          } else if (pressed && joystick_val[2] > 20) {
+              pressed = 0;
+          }
+      }
+      else{
+          if (pressed == 0 && joystick_val[2] < 20) {
+              pressed = 1;
+              screen = SELECTING;
+              cursor_x = 0;
+              cursor_y = 1;
+              time[0] = time[1] = time[2] = 0;
+              time_state = 0;
+          } else if (pressed && joystick_val[2] > 20) {
+              pressed = 0;
+          }
+      }
+//
+      if(now - lastRefreshTick >= 1000 / refreshRate){
+          HD44780_Clear();
+          if(screen == SELECTING) {
+              HD44780_SetCursor(0, 1);
+              HD44780_PrintStr(" +01 +05 +10 +20");
+              HD44780_SetCursor(0, 0);
+              sprintf(printout, "%s:%d", time_print[time_state], time[time_state]);
+              HD44780_PrintStr(printout);
+              HD44780_SetCursor(9, 0);
+              HD44780_PrintStr("->  <-");
+              HD44780_SetCursor(cursor_x, cursor_y);
+              HD44780_Blink();
+          }
+          else if(screen == CONFIRMING){
+              HD44780_SetCursor(0,0);
+              sprintf(printout, "%d:%d:%d", time[0], time[1], time[2]);
+              HD44780_PrintStr(printout);
+              HD44780_SetCursor(0,1);
+              HD44780_PrintStr("  Start   Back");
+              HD44780_SetCursor(cursor_x, 1);
+              HD44780_Blink();
+          }
+          else if(screen == COUNTING){
+              HD44780_SetCursor(0,0);
+              sprintf(printout, "Left:   Pauses:%d", remaining_pause);
+              HD44780_PrintStr(printout);
+              HD44780_SetCursor(0,1);
+              sprintf(printout, "%d:%d:%d", time_remaining/1000/3600,
+                      time_remaining/1000%3600/60, time_remaining/1000%3600%60);
+              HD44780_PrintStr(printout);
+              HD44780_SetCursor(cursor_x, 0);
+              HD44780_Blink();
+          }
+          else if(screen == PAUSING){
+              HD44780_SetCursor(0,0);
+              HD44780_PrintStr(" Restart");
+              HD44780_SetCursor(0,1);
+              sprintf(printout, "%d:%d:%d", time_remaining/1000/3600,
+                      time_remaining/1000%3600/60, time_remaining/1000%3600%60);
+              HD44780_PrintStr(printout);
+              HD44780_SetCursor(0,0);
+              HD44780_Blink();
+          }
+          else{
+              HD44780_SetCursor(0,0);
+              HD44780_PrintStr("Over");
+              HD44780_SetCursor(0,1);
+              HD44780_PrintStr(" Restart");
+              HD44780_SetCursor(0,1);
+              HD44780_Blink();
+          }
+          lastRefreshTick = now;
+      }
   }
   /* USER CODE END 3 */
 }
@@ -147,6 +382,40 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
+
 }
 
 /**
